@@ -1,0 +1,100 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+.Python
+env/
+venv/
+ENV/
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Virtual environment
+.venv/
+
+# Pytest cache
+.pytest_cache/
+
+# Coverage reports
+.coverage
+.coverage.*
+htmlcov/
+*.cover
+
+# MyPy
+.mypy_cache/
+.dmypy.json
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+
+# PyCharm IDE
+.idea/
+
+# VS Code
+.vscode/
+
+# Sublime Text
+*.sublime-workspace
+
+# Mac OS
+.DS_Store
+
+# Logs and databases
+*.log
+db.sqlite3
+
+# dotenv environment variables
+.env
+*.env
+
+# Local configuration files
+config.json
+settings.yaml
+
+# Docker
+*.dockerignore
+
+# Terraform
+.terraform/
+
+# AWS credentials
+.aws/
+
+# Ansible
+*.retry
+
+# Celery
+celerybeat-schedule
+
+# Scrapy
+.scrapy/
+
+# Sphinx documentation
+build/doctrees/
+build/html/
+
+# Jekyll
+_site/
+
+# Node.js
+node_modules/
+
+# Yarn
+.yarn/
+
+# Editor backup files
+*.swp
+*.swo
+*~
+*.bak
+
+# Custom Ignore (Add project-specific ignores below)
