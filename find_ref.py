@@ -1,12 +1,61 @@
 import argparse
 import requests
+import json
+import os
+import hashlib
+from datetime import datetime, timedelta
 
 # API configurations
 CROSSREF_API = "https://api.crossref.org/works"
 GOOGLE_BOOKS_API = "https://www.googleapis.com/books/v1/volumes"
 
-def search_crossref(author, year, keyword):
+# Cache functions
+def get_cache_path():
+    """Get the path to the cache directory"""
+    cache_dir = os.path.join(os.path.expanduser("~"), ".ref_finder_cache")
+    os.makedirs(cache_dir, exist_ok=True)
+    return cache_dir
+
+def get_cached_results(query_hash):
+    """Get cached results if they exist and are not expired"""
+    cache_path = os.path.join(get_cache_path(), f"{query_hash}.json")
+    if os.path.exists(cache_path):
+        try:
+            with open(cache_path, 'r') as f:
+                cache_data = json.load(f)
+            # Check if cache is expired (older than 1 day)
+            cache_time = datetime.fromisoformat(cache_data['timestamp'])
+            if datetime.now() - cache_time < timedelta(days=1):
+                print(f"Using cached results from {cache_time.strftime('%Y-%m-%d %H:%M:%S')}")
+                return cache_data['results']
+        except (json.JSONDecodeError, KeyError) as e:
+            print(f"Cache error: {e}. Fetching fresh data.")
+    return None
+
+def cache_results(query_hash, results):
+    """Cache the results of a query"""
+    cache_path = os.path.join(get_cache_path(), f"{query_hash}.json")
+    cache_data = {
+        'timestamp': datetime.now().isoformat(),
+        'results': results
+    }
+    with open(cache_path, 'w') as f:
+        json.dump(cache_data, f)
+
+def generate_query_hash(author, year, keyword, source):
+    """Generate a hash for the query to use as cache key"""
+    query_string = f"{author}|{year}|{keyword}|{source}"
+    return hashlib.md5(query_string.encode()).hexdigest()
+
+def search_crossref(author, year, keyword, use_cache=True):
     """Search Crossref API for works matching author, year and keyword"""
+    # Check cache first if use_cache is True
+    query_hash = generate_query_hash(author, year, keyword, "crossref")
+    if use_cache:
+        cached_results = get_cached_results(query_hash)
+        if cached_results is not None:
+            return cached_results
+    
     params = {
         "query.author": author,
         "query.bibliographic": keyword,
@@ -17,13 +66,23 @@ def search_crossref(author, year, keyword):
     try:
         response = requests.get(CROSSREF_API, params=params)
         response.raise_for_status()
-        return response.json()["message"]["items"]
+        results = response.json()["message"]["items"]
+        # Cache the results
+        cache_results(query_hash, results)
+        return results
     except requests.exceptions.RequestException as e:
         print(f"Error querying Crossref: {e}")
         return []
 
-def search_google_books(author, year, keyword):
+def search_google_books(author, year, keyword, use_cache=True):
     """Search Google Books API for matching books"""
+    # Check cache first if use_cache is True
+    query_hash = generate_query_hash(author, year, keyword, "google_books")
+    if use_cache:
+        cached_results = get_cached_results(query_hash)
+        if cached_results is not None:
+            return cached_results
+    
     query = f"inauthor:{author} subject:{keyword}"
     params = {
         "q": query,
@@ -41,6 +100,9 @@ def search_google_books(author, year, keyword):
             pub_date = item.get("volumeInfo", {}).get("publishedDate", "")
             if str(year) in pub_date:  # Check if year is in publication date
                 filtered_items.append(item)
+        
+        # Cache the results
+        cache_results(query_hash, filtered_items)
         return filtered_items
     except requests.exceptions.RequestException as e:
         print(f"Error querying Google Books: {e}")
@@ -97,8 +159,13 @@ def main():
     parser = argparse.ArgumentParser(description="Find references in APA format")
     parser.add_argument("--citation", required=True, help="Citation in format 'Author (Year)'")
     parser.add_argument("--keyword", required=True, help="Keyword to search for")
+    parser.add_argument("--no-cache", action="store_true", help="Bypass cache and fetch fresh data")
     
     args = parser.parse_args()
+    
+    # If no-cache flag is set, clear any existing cache for this search
+    if args.no_cache:
+        print("Cache bypass requested. Fetching fresh data...")
     
     # Parse citation
     try:
@@ -110,12 +177,14 @@ def main():
     
     # Search both APIs
     results = []
+    use_cache = not args.no_cache
+    
     print("Searching Crossref...")
-    crossref_results = search_crossref(author, year, args.keyword)
+    crossref_results = search_crossref(author, year, args.keyword, use_cache)
     results.extend([(item, "crossref") for item in crossref_results])
     
     print("Searching Google Books...")
-    google_results = search_google_books(author, year, args.keyword)
+    google_results = search_google_books(author, year, args.keyword, use_cache)
     results.extend([(item, "google_books") for item in google_results])
     
     if not results:

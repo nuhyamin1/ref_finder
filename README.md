@@ -9,6 +9,7 @@ Ref Finder is a command-line tool that helps researchers and students quickly fi
 - Search both Crossref and Google Books APIs
 - Handle multiple authors, journal titles, and publication details
 - Proper formatting of volume/issue numbers and page ranges
+- Caching of search results for improved performance
 
 ## Installation
 
@@ -33,6 +34,11 @@ python find_ref.py --citation "Author (Year)" --keyword "Topic"
 Example:
 ```bash
 python find_ref.py --citation "Chomsky (1965)" --keyword "Syntax"
+```
+
+To bypass the cache and fetch fresh data:
+```bash
+python find_ref.py --citation "Author (Year)" --keyword "Topic" --no-cache
 ```
 
 ## API Requirements
