@@ -7,10 +7,13 @@ from datetime import datetime, timedelta
 import csv
 from io import StringIO
 import sys
+import time
 
 # API configurations
 CROSSREF_API = "https://api.crossref.org/works"
 GOOGLE_BOOKS_API = "https://www.googleapis.com/books/v1/volumes"
+SEMANTIC_SCHOLAR_API = "https://api.semanticscholar.org/graph/v1/paper/search"
+OPEN_LIBRARY_API = "https://openlibrary.org/search.json"
 
 # Cache functions
 def get_cache_path():
@@ -112,10 +115,86 @@ def search_google_books(author, year, keyword, use_cache=True):
         print(f"Error querying Google Books: {e}", file=sys.stderr)
         return []
 
+def search_semantic_scholar(author, year, keyword, use_cache=True):
+    """Search Semantic Scholar API for academic papers"""
+    query_hash = generate_query_hash(author, year, keyword, "semantic_scholar")
+    if use_cache:
+        cached_results = get_cached_results(query_hash)
+        if cached_results is not None:
+            return cached_results
+    
+    # Construct query with author and keyword
+    query = f"{author} {keyword}"
+    params = {
+        "query": query,
+        "limit": 5,
+        "fields": "title,authors,year,journal,venue,url,externalIds"
+    }
+    
+    headers = {
+        "User-Agent": "Reference-Manager/1.0"  # Adding a user agent to be more polite
+    }
+    
+    try:
+        response = requests.get(SEMANTIC_SCHOLAR_API, params=params, headers=headers)
+        response.raise_for_status()
+        items = response.json().get("data", [])
+        
+        # Filter by year (±1 year)
+        filtered_items = []
+        for item in items:
+            item_year = item.get("year")
+            if item_year and (year-1 <= item_year <= year+1):
+                filtered_items.append(item)
+        
+        cache_results(query_hash, filtered_items)
+        return filtered_items
+    except requests.exceptions.RequestException as e:
+        print(f"Error querying Semantic Scholar: {e}", file=sys.stderr)
+        # Sleep for a moment if rate limited
+        if "429" in str(e):
+            print("Rate limited by Semantic Scholar API. Using cached results if available.", file=sys.stderr)
+            time.sleep(2)  # Add a small delay
+        return []
+
+def search_open_library(author, year, keyword, use_cache=True):
+    """Search Open Library API for books"""
+    query_hash = generate_query_hash(author, year, keyword, "open_library")
+    if use_cache:
+        cached_results = get_cached_results(query_hash)
+        if cached_results is not None:
+            return cached_results
+    
+    # Construct query
+    query = f"author:{author} {keyword}"
+    params = {
+        "q": query,
+        "limit": 5
+    }
+    
+    try:
+        response = requests.get(OPEN_LIBRARY_API, params=params)
+        response.raise_for_status()
+        docs = response.json().get("docs", [])
+        
+        # Filter by year
+        filtered_items = []
+        for item in docs:
+            pub_year = item.get("first_publish_year")
+            if pub_year and (year-1 <= pub_year <= year+1):
+                filtered_items.append(item)
+        
+        cache_results(query_hash, filtered_items)
+        return filtered_items
+    except requests.exceptions.RequestException as e:
+        print(f"Error querying Open Library: {e}", file=sys.stderr)
+        return []
+
 def extract_metadata(item, source):
     """Extract metadata from API response item into a standardized format"""
     metadata = {'source': source}
     if source == "crossref":
+        # Existing crossref code
         authors = [f"{a.get('given', '')} {a.get('family', '')}".strip() for a in item.get('author', [])]
         metadata['authors'] = authors
         metadata['title'] = item.get('title', [''])[0]
@@ -128,6 +207,7 @@ def extract_metadata(item, source):
         metadata['doi'] = item.get('DOI', '')
         metadata['type'] = 'article'
     elif source == "google_books":
+        # Existing google_books code
         volume_info = item.get('volumeInfo', {})
         authors = volume_info.get('authors', ['Unknown'])
         metadata['authors'] = authors
@@ -141,6 +221,25 @@ def extract_metadata(item, source):
                 isbn = identifier.get('identifier', '')
                 break
         metadata['isbn'] = isbn
+        metadata['type'] = 'book'
+    elif source == "semantic_scholar":
+        # Add semantic scholar metadata extraction
+        authors = [author.get('name', '') for author in item.get('authors', [])]
+        metadata['authors'] = authors
+        metadata['title'] = item.get('title', '')
+        metadata['journal'] = item.get('venue', '') or item.get('journal', {}).get('name', '')
+        metadata['year'] = item.get('year')
+        metadata['doi'] = item.get('externalIds', {}).get('DOI', '')
+        metadata['url'] = item.get('url', '')
+        metadata['type'] = 'article'
+    elif source == "open_library":
+        # Add open library metadata extraction
+        authors = item.get('author_name', ['Unknown'])
+        metadata['authors'] = authors
+        metadata['title'] = item.get('title', '')
+        metadata['publisher'] = item.get('publisher', ['Unknown publisher'])[0] if item.get('publisher') else 'Unknown publisher'
+        metadata['year'] = item.get('first_publish_year', '')
+        metadata['isbn'] = item.get('isbn', [''])[0] if item.get('isbn') else ''
         metadata['type'] = 'book'
     return metadata
 
@@ -214,24 +313,55 @@ def format_bibtex(metadata_list):
 
 def format_apa_from_metadata(metadata: dict) -> str:
     """Format a reference in APA style from metadata"""
+    # Format authors in APA style (Last, F. M.)
+    authors = metadata.get('authors', [])
+    authors_apa = []
+    
+    for author in authors:
+        parts = author.split()
+        if len(parts) > 1:
+            last_name = parts[-1]
+            initials = ''.join([f"{n[0]}." for n in parts[:-1]])
+            authors_apa.append(f"{last_name}, {initials}")
+        else:
+            authors_apa.append(author)  # Just use as is if can't parse
+    
+    # Format author list
+    if not authors_apa:
+        authors_str = ""
+    elif len(authors_apa) == 1:
+        authors_str = authors_apa[0]
+    else:
+        authors_str = ", ".join(authors_apa[:-1]) + ", & " + authors_apa[-1]
+    
+    # Format year
+    year = metadata.get('year', '')
+    
+    # Format title (sentence case for articles, title case for books)
+    title = metadata.get('title', '')
+    if title:
+        # Convert to sentence case for articles
+        if metadata['type'] == 'article':
+            title = title[0].upper() + title[1:].lower()
+        # For books, we keep the title case but ensure first letter is capitalized
+        else:
+            title = title[0].upper() + title[1:]
+    
     if metadata['type'] == 'article':
-        authors = metadata.get('authors', [])
-        authors_str = _format_author_list(authors)
+        # Journal article formatting
+        reference = f"{authors_str} ({year}). {title}. "
         
-        title = metadata.get('title', '').rstrip('. ')
-        if title and title[-1] not in {'.', '?', '!'}:
-            title += '.'
-            
-        reference = f"{authors_str} ({metadata.get('year', '')}). {title}"
-        
-        # Journal handling
+        # Journal name (italicized in final output)
         if journal := metadata.get('journal', ''):
-            reference += f" {journal}"
+            # Ensure journal name is in title case
+            journal_words = journal.split()
+            journal_title_case = ' '.join([w.capitalize() if w.lower() not in ['a', 'an', 'the', 'and', 'but', 'or', 'for', 'nor', 'on', 'at', 'to', 'from', 'by', 'in', 'of'] or i == 0 else w.lower() for i, w in enumerate(journal_words)])
+            reference += f"{journal_title_case}"
         
         # Volume/issue handling
         volume = metadata.get('volume', '')
         issue = metadata.get('issue', '')
-        if volume or issue:
+        if volume:
             reference += f", {volume}"
             if issue:
                 reference += f"({issue})"
@@ -242,7 +372,7 @@ def format_apa_from_metadata(metadata: dict) -> str:
         
         # DOI handling
         if doi := metadata.get('doi', ''):
-            if not reference.endswith(('.', '?', '!')):
+            if not reference.endswith('.'):
                 reference += '.'
             reference += f" https://doi.org/{doi}"
         else:
@@ -252,19 +382,18 @@ def format_apa_from_metadata(metadata: dict) -> str:
         return reference
     
     elif metadata['type'] == 'book':
-        # Similar improved logic for books
-        authors = metadata.get('authors', [])
-        authors_str = _format_author_list(authors)
+        # Book formatting
+        reference = f"{authors_str} ({year}). {title}"
         
-        title = metadata.get('title', '').rstrip('. ')
-        if title and title[-1] not in {'.', '?', '!'}:
-            title += '.'
-        
-        reference = f"{authors_str} ({metadata.get('year', '')}). {title}"
-        
+        # Publisher
         if publisher := metadata.get('publisher', ''):
-            reference += f" {publisher}."
+            reference += f". {publisher}"
         
+        # End with period
+        if not reference.endswith('.'):
+            reference += '.'
+        
+        # ISBN (optional in APA)
         if isbn := metadata.get('isbn', ''):
             reference += f" ISBN: {isbn}"
         
@@ -341,6 +470,14 @@ def main():
     print("Searching Google Books...", file=sys.stderr)
     google_results = search_google_books(author, year, args.keyword, use_cache)
     results.extend([(item, "google_books") for item in google_results])
+    
+    print("Searching Semantic Scholar...", file=sys.stderr)
+    semantic_results = search_semantic_scholar(author, year, args.keyword, use_cache)
+    results.extend([(item, "semantic_scholar") for item in semantic_results])
+    
+    print("Searching Open Library...", file=sys.stderr)
+    open_library_results = search_open_library(author, year, args.keyword, use_cache)
+    results.extend([(item, "open_library") for item in open_library_results])
     
     if not results:
         print("\nNo references found matching your query", file=sys.stderr)
