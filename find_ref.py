@@ -58,9 +58,12 @@ def search_crossref(author, year, keyword, use_cache=True):
         if cached_results is not None:
             return cached_results
     
+    # Prepare keyword for better search accuracy
+    keyword_query = ' '.join([f'"{term}"' if ' ' in term else term for term in keyword.split()])
+    
     params = {
         "query.author": author,
-        "query.bibliographic": keyword,
+        "query.bibliographic": keyword_query,
         "filter": f"from-pub-date:{year-1},until-pub-date:{year+1}",
         "rows": 5,
         "sort": "relevance"
@@ -83,7 +86,10 @@ def search_google_books(author, year, keyword, use_cache=True):
         if cached_results is not None:
             return cached_results
     
-    query = f"inauthor:{author} subject:{keyword}"
+    # Handle multi-word phrases in keyword search
+    keyword_parts = [f'"{term}"' if ' ' in term else term for term in keyword.split()]
+    keyword_query = ' '.join(keyword_parts)
+    query = f"inauthor:{author} subject:{keyword_query}"
     params = {
         "q": query,
         "maxResults": 5,
@@ -206,7 +212,7 @@ def format_bibtex(metadata_list):
     
     return "\n\n".join(entries)
 
-def format_apa_from_metadata(metadata):
+def format_apa_from_metadata(metadata: dict) -> str:
     """Format a reference in APA style from metadata"""
     if metadata['type'] == 'article':
         authors = metadata.get('authors', [])
@@ -264,6 +270,8 @@ def format_apa_from_metadata(metadata):
         
         return reference
     
+    return "Unknown reference format."  # Default return for unknown types
+
 def _format_author_list(authors):
     """Helper to format author list"""
     if not authors:
@@ -284,11 +292,42 @@ def main():
     args = parser.parse_args()
     
     # Parse citation
+    def parse_citation(citation):
+        """Parse citation string in multiple formats"""
+        citation = citation.strip()
+        # Format: 'name (year)' or '(name, year)'
+        if '(' in citation and ')' in citation:
+            # Handle '(name, year)' format
+            if citation.startswith('('):
+                content = citation.strip('()')
+                if ',' in content:
+                    author, year_str = map(str.strip, content.split(',', 1))
+                    return author, int(year_str)
+            # Handle 'name (year)' format
+            else:
+                try:
+                    author, rest = citation.split(' (', 1)
+                    year = int(rest.strip(')'))
+                    return author.strip(), year
+                except ValueError:
+                    pass
+        # Format: 'name, year'
+        elif ',' in citation:
+            try:
+                author, year_str = map(str.strip, citation.split(',', 1))
+                return author, int(year_str)
+            except ValueError:
+                pass
+        
+        raise ValueError("Invalid citation format")
+    
     try:
-        author, rest = args.citation.split(" (", 1)
-        year = int(rest.strip(")"))
+        author, year = parse_citation(args.citation)
     except ValueError:
-        print("Invalid citation format. Please use 'Author (Year)'", file=sys.stderr)
+        print("Invalid citation format. Please use one of these formats:", file=sys.stderr)
+        print("- Author (Year)", file=sys.stderr)
+        print("- (Author, Year)", file=sys.stderr)
+        print("- Author, Year", file=sys.stderr)
         return
     
     # Search both APIs
