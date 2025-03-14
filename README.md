@@ -10,6 +10,10 @@ Ref Finder is a command-line tool that helps researchers and students quickly fi
 - Handle multiple authors, journal titles, and publication details
 - Proper formatting of volume/issue numbers and page ranges
 - Caching of search results for improved performance
+- Save in different formats (json, bibtex, csv) default to APA
+
+# NEW!
+- Gui version (using PyQt6)
 
 ## Installation
 
@@ -46,6 +50,8 @@ python find_ref.py --citation "Author (Year)" --keyword "Topic" --no-cache
 This tool uses the following APIs:
 - Crossref API (no API key required)
 - Google Books API (no API key required)
+- Semantic Scholar API (no API key required)
+- Open Library API (no API key required)
 
 ## Contributing
 
@@ -65,4 +71,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 - Crossref for their excellent API
 - Google Books API team
+- Semantic Scholar API team
+- Open Library API team
 - APA Style for their formatting guidelines
