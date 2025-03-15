@@ -135,8 +135,13 @@ class ReferenceManagerApp(QMainWindow):
         form_group = QGroupBox("Search Parameters")
         form_layout = QGridLayout()
         
-        # File input
-        form_layout.addWidget(QLabel("File (optional):"), 0, 0)
+        # Create tab widget for input methods
+        input_tabs = QTabWidget()
+        
+        # File Input Tab
+        file_tab = QWidget()
+        file_layout = QGridLayout(file_tab)
+        file_layout.addWidget(QLabel("File:"), 0, 0)
         self.file_input = QLineEdit()
         self.file_input.setPlaceholderText("Select a file to extract citations from")
         file_button_layout = QHBoxLayout()
@@ -144,9 +149,21 @@ class ReferenceManagerApp(QMainWindow):
         self.browse_button = QPushButton("Browse")
         self.browse_button.clicked.connect(self.browse_file)
         file_button_layout.addWidget(self.browse_button)
-        form_layout.addLayout(file_button_layout, 0, 1)
+        file_layout.addLayout(file_button_layout, 0, 1)
+        input_tabs.addTab(file_tab, "File Input")
         
-        # Author and Year (adjust row numbers)
+        # Text Input Tab
+        text_tab = QWidget()
+        text_layout = QVBoxLayout(text_tab)
+        text_layout.addWidget(QLabel("Paste your text here:"))
+        self.text_input = QTextEdit()
+        self.text_input.setPlaceholderText("Paste or type your text containing citations here...")
+        text_layout.addWidget(self.text_input)
+        input_tabs.addTab(text_tab, "Text Input")
+        
+        form_layout.addWidget(input_tabs, 0, 0, 1, 2)
+        
+        # Rest of the form (citation, keywords, etc.)
         form_layout.addWidget(QLabel("Citation (Author, Year):"), 1, 0)
         self.citation_input = QLineEdit()
         self.citation_input.setPlaceholderText("e.g., 'Smith (2020)' or '(Smith, 2020)'")
@@ -244,15 +261,20 @@ class ReferenceManagerApp(QMainWindow):
         self.setCentralWidget(main_widget)
     
     def perform_search(self):
-        # Check if we're searching by file
-        if self.file_input.text().strip():
+        # Check if we're searching by file or text input
+        if self.file_input.text().strip() or self.text_input.toPlainText().strip():
             try:
-                content = find_ref.read_file_content(self.file_input.text().strip())
+                # Get content from either file or text input
+                if self.file_input.text().strip():
+                    content = find_ref.read_file_content(self.file_input.text().strip())
+                else:
+                    content = self.text_input.toPlainText().strip()
+                
                 citations = find_ref.extract_citations_from_text(content)
                 
                 if not citations:
                     QMessageBox.warning(self, "No Citations Found", 
-                                      "No citations were found in the selected file.")
+                                      "No citations were found in the input.")
                     return
                 
                 # Show citation selection dialog
@@ -270,7 +292,7 @@ class ReferenceManagerApp(QMainWindow):
                     return
                     
             except Exception as e:
-                QMessageBox.critical(self, "File Error", f"Error processing file: {str(e)}")
+                QMessageBox.critical(self, "Input Error", f"Error processing input: {str(e)}")
                 return
         
         # Get search parameters
