@@ -47,6 +47,56 @@ class SearchWorker(QThread):
             self.error.emit(f"Error during search: {str(e)}")
 
 
+# Add after the existing imports
+from PyQt6.QtWidgets import QFileDialog, QListWidget, QDialog, QVBoxLayout, QPushButton, QLabel
+
+# Add this new dialog class before the ReferenceManagerApp class
+class CitationSelectionDialog(QDialog):
+    def __init__(self, citations, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Select Citation")
+        self.setModal(True)
+        layout = QVBoxLayout(self)
+        
+        # Instructions
+        layout.addWidget(QLabel("Select a citation to search for:"))
+        
+        # List of citations
+        self.citation_list = QListWidget()
+        for citation in citations:
+            self.citation_list.addItem(citation['text'])
+        layout.addWidget(self.citation_list)
+        
+        # Keyword input
+        layout.addWidget(QLabel("Enter keyword to refine search (optional):"))
+        self.keyword_input = QLineEdit()
+        layout.addWidget(self.keyword_input)
+        
+        # Buttons
+        button_box = QHBoxLayout()
+        self.select_button = QPushButton("Search")
+        self.select_button.clicked.connect(self.accept)
+        self.cancel_button = QPushButton("Cancel")
+        self.cancel_button.clicked.connect(self.reject)
+        button_box.addWidget(self.select_button)
+        button_box.addWidget(self.cancel_button)
+        layout.addLayout(button_box)
+        
+        self.citation_list.itemSelectionChanged.connect(self.enable_select)
+        self.select_button.setEnabled(False)
+    
+    def enable_select(self):
+        self.select_button.setEnabled(bool(self.citation_list.selectedItems()))
+    
+    def get_selection(self):
+        if self.citation_list.currentItem():
+            return {
+                'index': self.citation_list.currentRow(),
+                'keyword': self.keyword_input.text().strip()
+            }
+        return None
+
+
 class ReferenceManagerApp(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -85,11 +135,22 @@ class ReferenceManagerApp(QMainWindow):
         form_group = QGroupBox("Search Parameters")
         form_layout = QGridLayout()
         
-        # Author and Year
-        form_layout.addWidget(QLabel("Citation (Author, Year):"), 0, 0)
+        # File input
+        form_layout.addWidget(QLabel("File (optional):"), 0, 0)
+        self.file_input = QLineEdit()
+        self.file_input.setPlaceholderText("Select a file to extract citations from")
+        file_button_layout = QHBoxLayout()
+        file_button_layout.addWidget(self.file_input)
+        self.browse_button = QPushButton("Browse")
+        self.browse_button.clicked.connect(self.browse_file)
+        file_button_layout.addWidget(self.browse_button)
+        form_layout.addLayout(file_button_layout, 0, 1)
+        
+        # Author and Year (adjust row numbers)
+        form_layout.addWidget(QLabel("Citation (Author, Year):"), 1, 0)
         self.citation_input = QLineEdit()
         self.citation_input.setPlaceholderText("e.g., 'Smith (2020)' or '(Smith, 2020)'")
-        form_layout.addWidget(self.citation_input, 0, 1)
+        form_layout.addWidget(self.citation_input, 1, 1)
         
         # Keywords (make it optional)
         form_layout.addWidget(QLabel("Keywords (optional):"), 1, 0)
@@ -183,9 +244,38 @@ class ReferenceManagerApp(QMainWindow):
         self.setCentralWidget(main_widget)
     
     def perform_search(self):
+        # Check if we're searching by file
+        if self.file_input.text().strip():
+            try:
+                content = find_ref.read_file_content(self.file_input.text().strip())
+                citations = find_ref.extract_citations_from_text(content)
+                
+                if not citations:
+                    QMessageBox.warning(self, "No Citations Found", 
+                                      "No citations were found in the selected file.")
+                    return
+                
+                # Show citation selection dialog
+                dialog = CitationSelectionDialog(citations, self)
+                if dialog.exec() == QDialog.DialogCode.Accepted:
+                    selection = dialog.get_selection()
+                    if selection:
+                        selected_citation = citations[selection['index']]
+                        self.citation_input.setText(f"{selected_citation['authors'][0]} ({selected_citation['year']})")
+                        if selection['keyword']:
+                            self.keyword_input.setText(selection['keyword'])
+                
+                # Continue with normal search if citation was selected
+                if not self.citation_input.text().strip():
+                    return
+                    
+            except Exception as e:
+                QMessageBox.critical(self, "File Error", f"Error processing file: {str(e)}")
+                return
+        
         # Get search parameters
         citation = self.citation_input.text().strip()
-        keyword = self.keyword_input.text().strip()  # Keyword is now optional
+        keyword = self.keyword_input.text().strip()
         use_cache = self.use_cache_checkbox.isChecked()
         
         # Validate inputs (only citation is required now)
@@ -367,6 +457,14 @@ class ReferenceManagerApp(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Save Error", f"Error saving file: {str(e)}")
 
+    def browse_file(self):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Select File",
+            os.path.expanduser("~"),
+            "Documents (*.txt *.pdf *.docx);;All Files (*)"
+        )
+        if file_path:
+            self.file_input.setText(file_path)
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
