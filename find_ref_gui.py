@@ -343,12 +343,23 @@ class ReferenceManagerApp(QMainWindow):
         
         # Save to file
         try:
-            mode = 'a' if append else 'w'
-            # Add newlines when appending
-            if append and os.path.exists(file_path) and os.path.getsize(file_path) > 0:
-                output = '\n\n' + output
+            # Read existing content first if appending
+            existing_content = ""
+            if append and os.path.exists(file_path):
+                try:
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        existing_content = f.read()
+                except Exception as e:
+                    QMessageBox.warning(self, "File Access Warning", 
+                                      f"Could not read existing file: {str(e)}\nCreating new file instead.")
+                    append = False
             
-            with open(file_path, mode, encoding='utf-8') as f:
+            # Write content
+            with open(file_path, 'w', encoding='utf-8') as f:
+                if append and existing_content:
+                    f.write(existing_content)
+                    if not existing_content.endswith('\n\n'):
+                        f.write('\n\n')
                 f.write(output)
             
             action = "appended to" if append else "saved to"
