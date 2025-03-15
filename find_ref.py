@@ -411,9 +411,104 @@ def _format_author_list(authors):
         return ", ".join(authors[:-1]) + " & " + authors[-1]
     return authors[0]
 
+# Add these imports at the top with other imports
+import re
+import PyPDF2
+import docx
+
+# Add these new functions after the existing functions and before main()
+def parse_citation(citation):
+    """Parse citation string in multiple formats"""
+    citation = citation.strip()
+    # Format: 'name (year)' or '(name, year)'
+    if '(' in citation and ')' in citation:
+        # Handle '(name, year)' format
+        if citation.startswith('('):
+            content = citation.strip('()')
+            if ',' in content:
+                author, year_str = map(str.strip, content.split(',', 1))
+                return author, int(year_str)
+        # Handle 'name (year)' format
+        else:
+            try:
+                author, rest = citation.split(' (', 1)
+                year = int(rest.strip(')'))
+                return author.strip(), year
+            except ValueError:
+                pass
+    # Format: 'name, year'
+    elif ',' in citation:
+        try:
+            author, year_str = map(str.strip, citation.split(',', 1))
+            return author, int(year_str)
+        except ValueError:
+            pass
+    
+    raise ValueError("Invalid citation format")
+
+def extract_citations_from_text(text):
+    """Extract citations from text using regex patterns"""
+    citation_patterns = [
+        r'([A-Za-z]+)\s*\((\d{4})\)',  # Smith (2020)
+        r'([A-Za-z]+)\s+and\s+([A-Za-z]+)\s*\((\d{4})\)',  # Smith and Jones (2020)
+        r'([A-Za-z]+)\s+&\s+([A-Za-z]+)\s*\((\d{4})\)',  # Smith & Jones (2020)
+        r'([A-Za-z]+)\s+et\s+al\.*\s*\((\d{4})\)',  # Smith et al (2020)
+        r'\(([A-Za-z]+),\s*(\d{4})\)',  # (Smith, 2020)
+        r'\(([A-Za-z]+)\s+and\s+([A-Za-z]+),\s*(\d{4})\)',  # (Smith and Jones, 2020)
+        r'\(([A-Za-z]+)\s+&\s+([A-Za-z]+),\s*(\d{4})\)',  # (Smith & Jones, 2020)
+        r'\(([A-Za-z]+)\s+et\s+al\.*,\s*(\d{4})\)'  # (Smith et al., 2020)
+    ]
+    
+    citations = []
+    for pattern in citation_patterns:
+        matches = re.finditer(pattern, text)
+        for match in matches:
+            groups = match.groups()
+            citation = {
+                'text': match.group(0),
+                'authors': groups[:-1],  # All groups except the last one are authors
+                'year': int(groups[-1])  # Last group is always the year
+            }
+            citations.append(citation)
+    
+    return citations
+
+def read_text_file(file_path):
+    """Read content from a text file"""
+    with open(file_path, 'r', encoding='utf-8') as f:
+        return f.read()
+
+def read_pdf_file(file_path):
+    """Read content from a PDF file"""
+    text = ""
+    with open(file_path, 'rb') as f:
+        pdf_reader = PyPDF2.PdfReader(f)
+        for page in pdf_reader.pages:
+            text += page.extract_text() + "\n"
+    return text
+
+def read_docx_file(file_path):
+    """Read content from a DOCX file"""
+    doc = docx.Document(file_path)
+    return "\n".join([paragraph.text for paragraph in doc.paragraphs])
+
+def read_file_content(file_path):
+    """Read content from a file based on its extension"""
+    ext = file_path.lower().split('.')[-1]
+    if ext == 'txt':
+        return read_text_file(file_path)
+    elif ext == 'pdf':
+        return read_pdf_file(file_path)
+    elif ext == 'docx':
+        return read_docx_file(file_path)
+    else:
+        raise ValueError(f"Unsupported file format: {ext}")
+
 def main():
     parser = argparse.ArgumentParser(description="Find references in multiple formats")
-    parser.add_argument("--citation", required=True, help="Citation in format 'Author (Year)'")
+    # Add new file argument
+    parser.add_argument("--file", help="Path to file to extract citations from (txt, pdf, or docx)")
+    parser.add_argument("--citation", help="Citation in format 'Author (Year)'")
     parser.add_argument("--keyword", help="Keyword to search for (optional)")
     parser.add_argument("--no-cache", action="store_true", help="Bypass cache and fetch fresh data")
     parser.add_argument("--format", choices=['text', 'json', 'csv', 'bibtex'], 
@@ -423,36 +518,49 @@ def main():
     
     args = parser.parse_args()
     
-    # Parse citation
-    def parse_citation(citation):
-        """Parse citation string in multiple formats"""
-        citation = citation.strip()
-        # Format: 'name (year)' or '(name, year)'
-        if '(' in citation and ')' in citation:
-            # Handle '(name, year)' format
-            if citation.startswith('('):
-                content = citation.strip('()')
-                if ',' in content:
-                    author, year_str = map(str.strip, content.split(',', 1))
-                    return author, int(year_str)
-            # Handle 'name (year)' format
-            else:
+    # Handle file input if provided
+    if args.file:
+        try:
+            content = read_file_content(args.file)
+            citations = extract_citations_from_text(content)
+            
+            if not citations:
+                print("\nNo citations found in the file.", file=sys.stderr)
+                return
+            
+            print("\nFound citations:", file=sys.stderr)
+            for i, citation in enumerate(citations, 1):
+                print(f"{i}. {citation['text']}", file=sys.stderr)
+            
+            # Ask user which citation to search for
+            while True:
+                choice = input("\nEnter the number of the citation to search for (or 'q' to quit): ")
+                if choice.lower() == 'q':
+                    return
                 try:
-                    author, rest = citation.split(' (', 1)
-                    year = int(rest.strip(')'))
-                    return author.strip(), year
+                    idx = int(choice) - 1
+                    if 0 <= idx < len(citations):
+                        selected = citations[idx]
+                        # Ask for optional keyword
+                        keyword = input("\nEnter a keyword to refine the search (or press Enter to skip): ").strip()
+                        if keyword:
+                            args.keyword = keyword
+                        args.citation = f"{selected['authors'][0]} ({selected['year']})"
+                        break
+                    else:
+                        print("Invalid number. Please try again.", file=sys.stderr)
                 except ValueError:
-                    pass
-        # Format: 'name, year'
-        elif ',' in citation:
-            try:
-                author, year_str = map(str.strip, citation.split(',', 1))
-                return author, int(year_str)
-            except ValueError:
-                pass
+                    print("Please enter a valid number.", file=sys.stderr)
         
-        raise ValueError("Invalid citation format")
+        except Exception as e:
+            print(f"Error processing file: {str(e)}", file=sys.stderr)
+            return
     
+    # Require either --file or --citation
+    if not args.file and not args.citation:
+        parser.error("Either --file or --citation must be provided")
+    
+    # Continue with the existing citation processing...
     try:
         author, year = parse_citation(args.citation)
     except ValueError:
