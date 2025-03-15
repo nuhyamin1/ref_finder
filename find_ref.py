@@ -61,16 +61,18 @@ def search_crossref(author, year, keyword, use_cache=True):
         if cached_results is not None:
             return cached_results
     
-    # Prepare keyword for better search accuracy
-    keyword_query = ' '.join([f'"{term}"' if ' ' in term else term for term in keyword.split()])
-    
     params = {
         "query.author": author,
-        "query.bibliographic": keyword_query,
         "filter": f"from-pub-date:{year-1},until-pub-date:{year+1}",
         "rows": 5,
         "sort": "relevance"
     }
+    
+    # Only add keyword to search if provided
+    if keyword:
+        keyword_query = ' '.join([f'"{term}"' if ' ' in term else term for term in keyword.split()])
+        params["query.bibliographic"] = keyword_query
+    
     try:
         response = requests.get(CROSSREF_API, params=params)
         response.raise_for_status()
@@ -124,7 +126,7 @@ def search_semantic_scholar(author, year, keyword, use_cache=True):
             return cached_results
     
     # Construct query with author and keyword
-    query = f"{author} {keyword}"
+    query = author if not keyword else f"{author} {keyword}"
     params = {
         "query": query,
         "limit": 5,
@@ -412,11 +414,12 @@ def _format_author_list(authors):
 def main():
     parser = argparse.ArgumentParser(description="Find references in multiple formats")
     parser.add_argument("--citation", required=True, help="Citation in format 'Author (Year)'")
-    parser.add_argument("--keyword", required=True, help="Keyword to search for")
+    parser.add_argument("--keyword", help="Keyword to search for (optional)")
     parser.add_argument("--no-cache", action="store_true", help="Bypass cache and fetch fresh data")
     parser.add_argument("--format", choices=['text', 'json', 'csv', 'bibtex'], 
                         default='text', help="Output format (default: text)")
-    parser.add_argument("--save", type=str, help="Path to save the output file")
+    parser.add_argument("--save", type=str, help="Path to save the output file (overwrites existing file)")
+    parser.add_argument("--append", type=str, help="Path to append the output to existing file")
     
     args = parser.parse_args()
     
@@ -462,21 +465,22 @@ def main():
     # Search both APIs
     results = []
     use_cache = not args.no_cache
+    keyword = args.keyword or ""  # Use empty string if keyword is not provided
     
     print("Searching Crossref...", file=sys.stderr)
-    crossref_results = search_crossref(author, year, args.keyword, use_cache)
+    crossref_results = search_crossref(author, year, keyword, use_cache)
     results.extend([(item, "crossref") for item in crossref_results])
     
     print("Searching Google Books...", file=sys.stderr)
-    google_results = search_google_books(author, year, args.keyword, use_cache)
+    google_results = search_google_books(author, year, keyword, use_cache)
     results.extend([(item, "google_books") for item in google_results])
     
     print("Searching Semantic Scholar...", file=sys.stderr)
-    semantic_results = search_semantic_scholar(author, year, args.keyword, use_cache)
+    semantic_results = search_semantic_scholar(author, year, keyword, use_cache)
     results.extend([(item, "semantic_scholar") for item in semantic_results])
     
     print("Searching Open Library...", file=sys.stderr)
-    open_library_results = search_open_library(author, year, args.keyword, use_cache)
+    open_library_results = search_open_library(author, year, keyword, use_cache)
     results.extend([(item, "open_library") for item in open_library_results])
     
     if not results:
@@ -499,10 +503,20 @@ def main():
         output = '\n\n'.join(apa_references)
     
     # Save or print output
-    if args.save:
-        with open(args.save, 'w') as f:
+    if args.save or args.append:
+        output_path = args.save or args.append
+        mode = 'w' if args.save else 'a'
+        
+        # For append mode, add a newline separator if file exists and isn't empty
+        if mode == 'a' and os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+            with open(output_path, mode, encoding='utf-8') as f:
+                f.write('\n\n')  # Add separation between existing and new content
+        
+        with open(output_path, mode, encoding='utf-8') as f:
             f.write(output)
-        print(f"\nOutput saved to {args.save}", file=sys.stderr)
+        
+        action = "saved to" if args.save else "appended to"
+        print(f"\nOutput {action} {output_path}", file=sys.stderr)
     else:
         print(output)
 

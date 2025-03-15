@@ -4,7 +4,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                             QHBoxLayout, QLabel, QLineEdit, QPushButton, 
                             QTextEdit, QComboBox, QCheckBox, QFileDialog,
                             QTabWidget, QMessageBox, QGroupBox, QGridLayout,
-                            QSplitter)
+                            QSplitter, QListWidget)
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QFont, QIcon, QTextCursor
 import find_ref
@@ -91,10 +91,10 @@ class ReferenceManagerApp(QMainWindow):
         self.citation_input.setPlaceholderText("e.g., 'Smith (2020)' or '(Smith, 2020)'")
         form_layout.addWidget(self.citation_input, 0, 1)
         
-        # Keywords
-        form_layout.addWidget(QLabel("Keywords:"), 1, 0)
+        # Keywords (make it optional)
+        form_layout.addWidget(QLabel("Keywords (optional):"), 1, 0)
         self.keyword_input = QLineEdit()
-        self.keyword_input.setPlaceholderText("e.g., 'machine learning' or 'climate change'")
+        self.keyword_input.setPlaceholderText("e.g., 'machine learning' (optional)")
         form_layout.addWidget(self.keyword_input, 1, 1)
         
         # Output format
@@ -122,6 +122,11 @@ class ReferenceManagerApp(QMainWindow):
         self.save_button.setEnabled(False)
         button_layout.addWidget(self.save_button)
         
+        self.append_button = QPushButton("Append Results")
+        self.append_button.clicked.connect(lambda: self.save_results(append=True))
+        self.append_button.setEnabled(False)
+        button_layout.addWidget(self.append_button)
+        
         search_layout.addLayout(button_layout)
         
         # Status area
@@ -142,10 +147,32 @@ class ReferenceManagerApp(QMainWindow):
         results_label.setFont(results_font)
         results_layout.addWidget(results_label)
         
-        # Results display
+        # Create tab widget for different views
+        self.results_tabs = QTabWidget()
+        
+        # Text Edit tab
+        text_tab = QWidget()
+        text_layout = QVBoxLayout(text_tab)
         self.results_text = QTextEdit()
-        self.results_text.setReadOnly(True)
-        results_layout.addWidget(self.results_text)
+        self.results_text.setReadOnly(False)
+        text_layout.addWidget(self.results_text)
+        edit_note = QLabel("Note: You can edit the results before saving")
+        edit_note.setStyleSheet("color: gray; font-style: italic;")
+        text_layout.addWidget(edit_note)
+        self.results_tabs.addTab(text_tab, "Text View")
+        
+        # List Widget tab
+        list_tab = QWidget()
+        list_layout = QVBoxLayout(list_tab)
+        self.results_list = QListWidget()
+        self.results_list.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
+        list_layout.addWidget(self.results_list)
+        list_note = QLabel("Note: Click an item to select it for saving")
+        list_note.setStyleSheet("color: gray; font-style: italic;")
+        list_layout.addWidget(list_note)
+        self.results_tabs.addTab(list_tab, "List View")
+        
+        results_layout.addWidget(self.results_tabs)
         
         # Add results section to splitter
         splitter.addWidget(results_widget)
@@ -158,13 +185,13 @@ class ReferenceManagerApp(QMainWindow):
     def perform_search(self):
         # Get search parameters
         citation = self.citation_input.text().strip()
-        keyword = self.keyword_input.text().strip()
+        keyword = self.keyword_input.text().strip()  # Keyword is now optional
         use_cache = self.use_cache_checkbox.isChecked()
         
-        # Validate inputs
-        if not citation or not keyword:
+        # Validate inputs (only citation is required now)
+        if not citation:
             QMessageBox.warning(self, "Missing Information", 
-                               "Please provide both citation and keyword information.")
+                               "Please provide citation information.")
             return
         
         # Parse citation
@@ -238,16 +265,21 @@ class ReferenceManagerApp(QMainWindow):
                                      "Try adjusting your search terms or expanding the year range.")
             self.status_label.setText("No results found")
             self.save_button.setEnabled(False)
+            self.append_button.setEnabled(False)
         else:
-            # Format and display results
             self.display_formatted_results()
             self.status_label.setText(f"Found {len(self.metadata_list)} references")
             self.save_button.setEnabled(True)
+            self.append_button.setEnabled(True)
         
         self.search_button.setEnabled(True)
     
     def display_formatted_results(self):
         format_type = self.format_combo.currentText()
+        
+        # Clear previous results
+        self.results_text.clear()
+        self.results_list.clear()
         
         if format_type == "JSON":
             output = find_ref.format_json(self.metadata_list)
@@ -258,12 +290,26 @@ class ReferenceManagerApp(QMainWindow):
         else:  # Text (APA)
             apa_references = [find_ref.format_apa_from_metadata(md) for md in self.metadata_list]
             output = '\n\n'.join(apa_references)
+            # Add items to list widget
+            for ref in apa_references:
+                self.results_list.addItem(ref)
         
         self.results_text.setText(output)
-    
-    def save_results(self):
+
+    def save_results(self, append=False):
         if not self.metadata_list:
             return
+        
+        # Get the output based on current view and selection
+        if self.results_tabs.currentIndex() == 1:  # List View
+            current_item = self.results_list.currentItem()
+            if not current_item:
+                QMessageBox.warning(self, "No Selection", 
+                                   "Please select an item from the list to save.")
+                return
+            output = current_item.text()
+        else:  # Text View
+            output = self.results_text.toPlainText()
         
         format_type = self.format_combo.currentText()
         
@@ -295,22 +341,18 @@ class ReferenceManagerApp(QMainWindow):
         if not file_path.endswith(default_ext):
             file_path += default_ext
         
-        # Get formatted output
-        if format_type == "JSON":
-            output = find_ref.format_json(self.metadata_list)
-        elif format_type == "CSV":
-            output = find_ref.format_csv(self.metadata_list)
-        elif format_type == "BibTeX":
-            output = find_ref.format_bibtex(self.metadata_list)
-        else:  # Text (APA)
-            apa_references = [find_ref.format_apa_from_metadata(md) for md in self.metadata_list]
-            output = '\n\n'.join(apa_references)
-        
         # Save to file
         try:
-            with open(file_path, 'w', encoding='utf-8') as f:
+            mode = 'a' if append else 'w'
+            # Add newlines when appending
+            if append and os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+                output = '\n\n' + output
+            
+            with open(file_path, mode, encoding='utf-8') as f:
                 f.write(output)
-            self.status_label.setText(f"Results saved to {file_path}")
+            
+            action = "appended to" if append else "saved to"
+            self.status_label.setText(f"Results {action} {file_path}")
         except Exception as e:
             QMessageBox.critical(self, "Save Error", f"Error saving file: {str(e)}")
 
