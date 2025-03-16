@@ -64,7 +64,7 @@ def search_crossref(author, year, keyword, use_cache=True):
     params = {
         "query.author": author,
         "filter": f"from-pub-date:{year-1},until-pub-date:{year+1}",
-        "rows": 5,
+        "rows": 10,
         "sort": "relevance"
     }
     
