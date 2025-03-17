@@ -14,6 +14,12 @@ CROSSREF_API = "https://api.crossref.org/works"
 GOOGLE_BOOKS_API = "https://www.googleapis.com/books/v1/volumes"
 SEMANTIC_SCHOLAR_API = "https://api.semanticscholar.org/graph/v1/paper/search"
 OPEN_LIBRARY_API = "https://openlibrary.org/search.json"
+# New API endpoints
+OPEN_ALEX_API = "https://api.openalex.org/works"
+OPEN_CITATIONS_API = "https://opencitations.net/index/coci/api/v1"
+UNPAYWALL_API = "https://api.unpaywall.org/v2"
+LENS_API = "https://api.lens.org/scholarly/search"
+DATACITE_API = "https://api.datacite.org/dois"
 
 # Cache functions
 def get_cache_path():
@@ -192,6 +198,166 @@ def search_open_library(author, year, keyword, use_cache=True):
         print(f"Error querying Open Library: {e}", file=sys.stderr)
         return []
 
+def search_open_alex(author, year, keyword, use_cache=True):
+    """Search OpenAlex API for academic works"""
+    query_hash = generate_query_hash(author, year, keyword, "open_alex")
+    if use_cache:
+        cached_results = get_cached_results(query_hash)
+        if cached_results is not None:
+            return cached_results
+    
+    # Construct query parameters
+    params = {
+        "filter": f"publication_year:{year-1}:{year+1},author.display_name.search:{author}",
+        "search": keyword if keyword else None,
+        "per_page": 5
+    }
+    
+    # Remove None values
+    params = {k: v for k, v in params.items() if v is not None}
+    
+    try:
+        response = requests.get(OPEN_ALEX_API, params=params)
+        response.raise_for_status()
+        results = response.json().get("results", [])
+        cache_results(query_hash, results)
+        return results
+    except requests.exceptions.RequestException as e:
+        print(f"Error querying OpenAlex: {e}", file=sys.stderr)
+        return []
+
+def search_open_citations(author, year, keyword, use_cache=True):
+    """Search OpenCitations API for citation data"""
+    # Note: OpenCitations works best with DOIs rather than author/year
+    # This is a simplified implementation that may need refinement
+    query_hash = generate_query_hash(author, year, keyword, "open_citations")
+    if use_cache:
+        cached_results = get_cached_results(query_hash)
+        if cached_results is not None:
+            return cached_results
+    
+    # Since OpenCitations requires DOIs, we'll first search CrossRef to get DOIs
+    crossref_results = search_crossref(author, year, keyword, use_cache)
+    
+    all_citations = []
+    # Get citations for up to 3 DOIs from CrossRef results
+    for item in crossref_results[:3]:
+        doi = item.get('DOI')
+        if not doi:
+            continue
+            
+        try:
+            url = f"{OPEN_CITATIONS_API}/citations/{doi}"
+            response = requests.get(url)
+            response.raise_for_status()
+            citations = response.json()
+            if citations:
+                all_citations.extend(citations)
+                
+            # Add a small delay to avoid rate limiting
+            time.sleep(0.5)
+        except requests.exceptions.RequestException as e:
+            print(f"Error querying OpenCitations for DOI {doi}: {e}", file=sys.stderr)
+    
+    cache_results(query_hash, all_citations)
+    return all_citations
+
+def search_unpaywall(author, year, keyword, use_cache=True, email="user@example.com"):
+    """Search Unpaywall API for open access information"""
+    # Note: Unpaywall requires an email and works with DOIs
+    # You should replace the default email with a real one
+    query_hash = generate_query_hash(author, year, keyword, "unpaywall")
+    if use_cache:
+        cached_results = get_cached_results(query_hash)
+        if cached_results is not None:
+            return cached_results
+    
+    # First search CrossRef to get DOIs
+    crossref_results = search_crossref(author, year, keyword, use_cache)
+    
+    unpaywall_results = []
+    # Get open access info for up to 3 DOIs from CrossRef results
+    for item in crossref_results[:3]:
+        doi = item.get('DOI')
+        if not doi:
+            continue
+            
+        try:
+            url = f"{UNPAYWALL_API}/{doi}?email={email}"
+            response = requests.get(url)
+            response.raise_for_status()
+            data = response.json()
+            unpaywall_results.append(data)
+                
+            # Add a small delay to avoid rate limiting
+            time.sleep(0.5)
+        except requests.exceptions.RequestException as e:
+            print(f"Error querying Unpaywall for DOI {doi}: {e}", file=sys.stderr)
+    
+    cache_results(query_hash, unpaywall_results)
+    return unpaywall_results
+
+def search_lens(author, year, keyword, use_cache=True, api_key=None):
+    """Search The Lens API for scholarly works"""
+    # Note: The Lens API requires an API key
+    if not api_key:
+        print("Warning: No API key provided for The Lens API. Skipping search.", file=sys.stderr)
+        return []
+        
+    query_hash = generate_query_hash(author, year, keyword, "lens")
+    if use_cache:
+        cached_results = get_cached_results(query_hash)
+        if cached_results is not None:
+            return cached_results
+    
+    # Construct query
+    query = f"{author} {keyword}".strip()
+    if year:
+        query += f" year:{year}"
+        
+    headers = {"Authorization": f"Bearer {api_key}"}
+    params = {"q": query}
+    
+    try:
+        response = requests.get(LENS_API, headers=headers, params=params)
+        response.raise_for_status()
+        results = response.json().get("data", [])
+        cache_results(query_hash, results)
+        return results
+    except requests.exceptions.RequestException as e:
+        print(f"Error querying The Lens API: {e}", file=sys.stderr)
+        return []
+
+def search_datacite(author, year, keyword, use_cache=True):
+    """Search DataCite API for research data DOIs"""
+    query_hash = generate_query_hash(author, year, keyword, "datacite")
+    if use_cache:
+        cached_results = get_cached_results(query_hash)
+        if cached_results is not None:
+            return cached_results
+    
+    # Construct query parameters
+    params = {
+        "query": f"creators.name:{author}",
+        "page[size]": 5
+    }
+    
+    if keyword:
+        params["query"] += f" AND titles.title:{keyword}"
+        
+    if year:
+        params["query"] += f" AND publicationYear:{year}"
+    
+    try:
+        response = requests.get(f"{DATACITE_API}", params=params)
+        response.raise_for_status()
+        results = response.json().get("data", [])
+        cache_results(query_hash, results)
+        return results
+    except requests.exceptions.RequestException as e:
+        print(f"Error querying DataCite: {e}", file=sys.stderr)
+        return []
+
 def extract_metadata(item, source):
     """Extract metadata from API response item into a standardized format"""
     metadata = {'source': source}
@@ -243,6 +409,54 @@ def extract_metadata(item, source):
         metadata['year'] = item.get('first_publish_year', '')
         metadata['isbn'] = item.get('isbn', [''])[0] if item.get('isbn') else ''
         metadata['type'] = 'book'
+    elif source == "open_alex":
+        # Extract OpenAlex metadata
+        authors = []
+        for author_data in item.get('authorships', []):
+            for author in author_data.get('author', {}).get('display_name', []):
+                authors.append(author)
+        
+        metadata['authors'] = authors if authors else ['Unknown']
+        metadata['title'] = item.get('title', '')
+        metadata['journal'] = item.get('primary_location', {}).get('source', {}).get('display_name', '')
+        metadata['year'] = item.get('publication_year')
+        metadata['doi'] = item.get('doi', '')
+        metadata['type'] = 'article'
+    elif source == "open_citations":
+        # Extract OpenCitations metadata
+        metadata['authors'] = [item.get('citing_author', 'Unknown')]
+        metadata['title'] = item.get('citing_title', '')
+        metadata['journal'] = item.get('citing_journal_title', '')
+        metadata['year'] = item.get('citing_publication_date', '')[:4] if item.get('citing_publication_date') else ''
+        metadata['doi'] = item.get('citing', '')
+        metadata['type'] = 'article'
+    elif source == "unpaywall":
+        # Extract Unpaywall metadata
+        metadata['authors'] = [a.get('given', '') + ' ' + a.get('family', '') for a in item.get('z_authors', [])]
+        metadata['title'] = item.get('title', '')
+        metadata['journal'] = item.get('journal_name', '')
+        metadata['year'] = item.get('year')
+        metadata['doi'] = item.get('doi', '')
+        metadata['url'] = item.get('best_oa_location', {}).get('url', '')
+        metadata['type'] = 'article'
+    elif source == "lens":
+        # Extract The Lens metadata
+        metadata['authors'] = [a.get('name', '') for a in item.get('authors', [])]
+        metadata['title'] = item.get('title', '')
+        metadata['journal'] = item.get('source', {}).get('title', '')
+        metadata['year'] = item.get('year')
+        metadata['doi'] = item.get('doi', '')
+        metadata['type'] = 'article'
+    elif source == "datacite":
+        # Extract DataCite metadata
+        attributes = item.get('attributes', {})
+        creators = attributes.get('creators', [])
+        metadata['authors'] = [c.get('name', '') for c in creators]
+        metadata['title'] = attributes.get('titles', [{}])[0].get('title', '')
+        metadata['publisher'] = attributes.get('publisher', '')
+        metadata['year'] = attributes.get('publicationYear', '')
+        metadata['doi'] = attributes.get('doi', '')
+        metadata['type'] = 'dataset'
     return metadata
 
 def format_json(metadata_list):
@@ -515,6 +729,9 @@ def main():
                         default='text', help="Output format (default: text)")
     parser.add_argument("--save", type=str, help="Path to save the output file (overwrites existing file)")
     parser.add_argument("--append", type=str, help="Path to append the output to existing file")
+    # Add new arguments for API keys
+    parser.add_argument("--lens-api-key", type=str, help="API key for The Lens API")
+    parser.add_argument("--unpaywall-email", type=str, help="Email for Unpaywall API")
     
     args = parser.parse_args()
     
@@ -590,6 +807,33 @@ def main():
     print("Searching Open Library...", file=sys.stderr)
     open_library_results = search_open_library(author, year, keyword, use_cache)
     results.extend([(item, "open_library") for item in open_library_results])
+    
+    # Add new API searches
+    print("Searching OpenAlex...", file=sys.stderr)
+    open_alex_results = search_open_alex(author, year, keyword, use_cache)
+    results.extend([(item, "open_alex") for item in open_alex_results])
+    
+    print("Searching OpenCitations...", file=sys.stderr)
+    open_citations_results = search_open_citations(author, year, keyword, use_cache)
+    results.extend([(item, "open_citations") for item in open_citations_results])
+    
+    # Use provided email or default
+    unpaywall_email = args.unpaywall_email or "user@example.com"
+    print("Searching Unpaywall...", file=sys.stderr)
+    unpaywall_results = search_unpaywall(author, year, keyword, use_cache, unpaywall_email)
+    results.extend([(item, "unpaywall") for item in unpaywall_results])
+    
+    # Only search The Lens if API key is provided
+    if args.lens_api_key:
+        print("Searching The Lens...", file=sys.stderr)
+        lens_results = search_lens(author, year, keyword, use_cache, args.lens_api_key)
+        results.extend([(item, "lens") for item in lens_results])
+    else:
+        print("Skipping The Lens API (no API key provided)", file=sys.stderr)
+    
+    print("Searching DataCite...", file=sys.stderr)
+    datacite_results = search_datacite(author, year, keyword, use_cache)
+    results.extend([(item, "datacite") for item in datacite_results])
     
     if not results:
         print("\nNo references found matching your query", file=sys.stderr)
