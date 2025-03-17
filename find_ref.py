@@ -54,14 +54,14 @@ def cache_results(query_hash, results):
     with open(cache_path, 'w') as f:
         json.dump(cache_data, f)
 
-def generate_query_hash(author, year, keyword, source):
+def generate_query_hash(author, year, keyword, source, subject=None):
     """Generate a hash for the query to use as cache key"""
-    query_string = f"{author}|{year}|{keyword}|{source}"
+    query_string = f"{author}|{year}|{keyword}|{source}|{subject}"
     return hashlib.md5(query_string.encode()).hexdigest()
 
-def search_crossref(author, year, keyword, use_cache=True):
+def search_crossref(author, year, keyword, use_cache=True, subject=None):
     """Search Crossref API for works matching author, year and keyword"""
-    query_hash = generate_query_hash(author, year, keyword, "crossref")
+    query_hash = generate_query_hash(author, year, keyword, "crossref", subject)
     if use_cache:
         cached_results = get_cached_results(query_hash)
         if cached_results is not None:
@@ -74,10 +74,15 @@ def search_crossref(author, year, keyword, use_cache=True):
         "sort": "relevance"
     }
     
-    # Only add keyword to search if provided
+    # Add subject and keyword to search if provided
+    search_terms = []
     if keyword:
-        keyword_query = ' '.join([f'"{term}"' if ' ' in term else term for term in keyword.split()])
-        params["query.bibliographic"] = keyword_query
+        search_terms.append(keyword)
+    if subject:
+        search_terms.append(f"subject:{subject}")
+    
+    if search_terms:
+        params["query.bibliographic"] = ' '.join([f'"{term}"' if ' ' in term else term for term in search_terms])
     
     try:
         response = requests.get(CROSSREF_API, params=params)
@@ -732,6 +737,7 @@ def main():
     # Add new arguments for API keys
     parser.add_argument("--lens-api-key", type=str, help="API key for The Lens API")
     parser.add_argument("--unpaywall-email", type=str, help="Email for Unpaywall API")
+    parser.add_argument("--subject", help="Subject area to filter results (e.g., physics, mathematics)")
     
     args = parser.parse_args()
     
@@ -792,8 +798,11 @@ def main():
     use_cache = not args.no_cache
     keyword = args.keyword or ""  # Use empty string if keyword is not provided
     
+    # Update the API calls to include subject
+    subject = args.subject or ""  # Use empty string if subject is not provided
+    
     print("Searching Crossref...", file=sys.stderr)
-    crossref_results = search_crossref(author, year, keyword, use_cache)
+    crossref_results = search_crossref(author, year, keyword, use_cache, subject)
     results.extend([(item, "crossref") for item in crossref_results])
     
     print("Searching Google Books...", file=sys.stderr)
