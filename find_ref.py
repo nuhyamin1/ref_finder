@@ -74,15 +74,16 @@ def search_crossref(author, year, keyword, use_cache=True, subject=None):
         "sort": "relevance"
     }
     
-    # Add subject and keyword to search if provided
+    # Add subject, keyword, and title to search if provided
     search_terms = []
     if keyword:
-        search_terms.append(keyword)
+        search_terms.append(f'title:"{keyword}"')  # Search in title
+        search_terms.append(keyword)  # Also search in general
     if subject:
         search_terms.append(f"subject:{subject}")
     
     if search_terms:
-        params["query.bibliographic"] = ' '.join([f'"{term}"' if ' ' in term else term for term in search_terms])
+        params["query.bibliographic"] = ' '.join(search_terms)
     
     try:
         response = requests.get(CROSSREF_API, params=params)
